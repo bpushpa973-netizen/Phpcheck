@@ -10,16 +10,16 @@ function env_value(string $name, ?string $default = null): ?string {
     return ($value === false || $value === '') ? $default : $value;
 }
 
-// Prefer Railway MYSQL_URL. Also supports Railway's MYSQLHOST/MYSQLPORT/... variables.
+// Railway: prefer the public MySQL URL when the web service cannot resolve
+// the private *.railway.internal hostname. Fall back to MYSQL_URL and then
+// the individual MYSQL* variables.
 $host = env_value('MYSQLHOST', '127.0.0.1');
 $port = (int) env_value('MYSQLPORT', '3306');
 $dbname = env_value('MYSQLDATABASE', 'djgaming');
 $username = env_value('MYSQLUSER', 'root');
 $password = env_value('MYSQLPASSWORD', '');
 
-// Use MYSQL_URL only when it is actually a complete URL. Otherwise prefer
-// Railway's individual MYSQL* variables (especially when MYSQL_URL is stale).
-$mysqlUrl = env_value('MYSQL_URL') ?: env_value('DATABASE_URL');
+$mysqlUrl = env_value('MYSQL_PUBLIC_URL') ?: env_value('MYSQL_URL') ?: env_value('DATABASE_URL');
 if ($mysqlUrl && preg_match('/^mysql:\/\//i', $mysqlUrl)) {
     $parts = parse_url($mysqlUrl);
     if ($parts !== false && !empty($parts['host'])) {
@@ -37,10 +37,8 @@ if (!extension_loaded('pdo_mysql')) {
 }
 
 try {
-    // Give a useful Railway-specific message if the private hostname cannot resolve.
-    if (!filter_var($host, FILTER_VALIDATE_IP) && gethostbyname($host) === $host) {
-        throw new RuntimeException("MySQL host '$host' cannot be resolved. Ensure the MySQL service is in the same Railway project/environment and reference MYSQLHOST from that service.");
-    }
+    // Do not fail before PDO gets a chance to connect. Public Railway proxy
+    // hosts (e.g. *.proxy.rlwy.net) are intentionally used when available.
 
     $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
     $pdo = new PDO($dsn, $username, $password, [
