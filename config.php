@@ -1,6 +1,8 @@
 <?php
 // Railway-ready database + website API configuration.
-session_start();
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 date_default_timezone_set('Asia/Kolkata');
 
 function env_value(string $name, ?string $default = null): ?string {
@@ -9,19 +11,21 @@ function env_value(string $name, ?string $default = null): ?string {
 }
 
 // Prefer Railway MYSQL_URL. Also supports Railway's MYSQLHOST/MYSQLPORT/... variables.
-$mysqlUrl = env_value('MYSQL_URL') ?: env_value('DATABASE_URL');
 $host = env_value('MYSQLHOST', '127.0.0.1');
 $port = (int) env_value('MYSQLPORT', '3306');
 $dbname = env_value('MYSQLDATABASE', 'djgaming');
 $username = env_value('MYSQLUSER', 'root');
 $password = env_value('MYSQLPASSWORD', '');
 
-if ($mysqlUrl) {
+// Use MYSQL_URL only when it is actually a complete URL. Otherwise prefer
+// Railway's individual MYSQL* variables (especially when MYSQL_URL is stale).
+$mysqlUrl = env_value('MYSQL_URL') ?: env_value('DATABASE_URL');
+if ($mysqlUrl && preg_match('/^mysql:\/\//i', $mysqlUrl)) {
     $parts = parse_url($mysqlUrl);
-    if ($parts !== false) {
-        $host = $parts['host'] ?? $host;
+    if ($parts !== false && !empty($parts['host'])) {
+        $host = $parts['host'];
         $port = isset($parts['port']) ? (int)$parts['port'] : $port;
-        $dbname = isset($parts['path']) ? ltrim($parts['path'], '/') : $dbname;
+        $dbname = isset($parts['path']) && ltrim($parts['path'], '/') !== '' ? ltrim($parts['path'], '/') : $dbname;
         $username = isset($parts['user']) ? urldecode($parts['user']) : $username;
         $password = isset($parts['pass']) ? urldecode($parts['pass']) : $password;
     }
@@ -33,6 +37,11 @@ if (!extension_loaded('pdo_mysql')) {
 }
 
 try {
+    // Give a useful Railway-specific message if the private hostname cannot resolve.
+    if (!filter_var($host, FILTER_VALIDATE_IP) && gethostbyname($host) === $host) {
+        throw new RuntimeException("MySQL host '$host' cannot be resolved. Ensure the MySQL service is in the same Railway project/environment and reference MYSQLHOST from that service.");
+    }
+
     $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
     $pdo = new PDO($dsn, $username, $password, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
